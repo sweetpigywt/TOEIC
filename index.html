@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TOEIC 分级强化训练</title>
+    <style>
+        :root {
+            --primary: #2563eb; --success: #16a34a; --error: #dc2626;
+            --warning: #f59e0b; --bg: #f8fafc; --text: #1e293b;
+        }
+        body { font-family: sans-serif; background: var(--bg); color: var(--text); padding: 20px; margin: 0; }
+        .container { max-width: 800px; margin: 0 auto; }
+        
+        /* 头部控制区 */
+        .header { background: #white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); margin-bottom: 20px; position: sticky; top: 10px; z-index: 100; background: white; }
+        .filter-group { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 15px; }
+        
+        .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; transition: 0.2s; background: #e2e8f0; }
+        .btn.active { background: var(--primary); color: white; }
+        .btn-submit { background: var(--primary); color: white; width: 100%; padding: 15px; font-size: 16px; font-weight: bold; margin-top: 20px; }
+        
+        /* 题目样式 */
+        .quiz-item { background: white; padding: 20px; border-radius: 12px; margin-bottom: 15px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); border-left: 5px solid transparent; }
+        .quiz-item.lvl-1 { border-left-color: #94a3b8; } /* 错一次 */
+        .quiz-item.lvl-2 { border-left-color: var(--warning); } /* 错两次 */
+        .quiz-item.lvl-3 { border-left-color: var(--error); } /* 顽固错题 */
+        
+        .badge { font-size: 11px; padding: 2px 6px; border-radius: 4px; background: #fee2e2; color: var(--error); margin-left: 8px; }
+        .option-label { display: flex; align-items: center; padding: 12px; border: 1px solid #e2e8f0; border-radius: 8px; margin: 8px 0; cursor: pointer; }
+        .option-label:hover { background: #f1f5f9; }
+        .correct-ans { background: #dcfce7 !important; border-color: var(--success) !important; }
+        .wrong-ans { background: #fee2e2 !important; border-color: var(--error) !important; }
+        
+        #score-board { display: none; text-align: center; padding: 15px; background: white; border-radius: 8px; margin-bottom: 15px; font-weight: bold; border: 2px solid var(--primary); }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header">
+        <h2 style="margin:0">TOEIC 智能练习系统</h2>
+        <div id="stats" style="font-size: 13px; color: #64748b; margin-top: 5px;">加载中...</div>
+        
+        <div class="filter-group">
+            <button class="btn active" onclick="setFilter('all', this)">全部题目</button>
+            <button class="btn" onclick="setFilter('wrong1', this)">仅错1次</button>
+            <button class="btn" onclick="setFilter('wrong2', this)">错2次</button>
+            <button class="btn" onclick="setFilter('heavy', this)">顽固错题(3次+)</button>
+        </div>
+    </div>
+
+    <div id="score-board"></div>
+    <div id="quiz-container"></div>
+    
+    <div id="actions" style="margin-bottom: 50px;">
+        <button class="btn-submit" id="submit-btn" onclick="checkAnswers()">提交答案</button>
+        <button class="btn-submit" id="next-btn" onclick="renderQuiz()" style="display:none; background:#64748b">下一组 (10题)</button>
+    </div>
+</div>
+
+<script src="data.js"></script>
+<script>
+    let filterMode = 'all';
+    let currentQuestions = [];
+    const STORAGE_KEY = 'toeic_smart_records';
+
+    // 数据结构：{ 题目ID: 错误次数 }
+    function getRecords() {
+        return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+    }
+
+    function updateRecord(id, isCorrect) {
+        let records = getRecords();
+        if (isCorrect) {
+            // 如果做对了，错误次数减 1，直到从纪录中移除
+            if (records[id]) {
+                records[id] -= 1;
+                if (records[id] <= 0) delete records[id];
+            }
+        } else {
+            // 如果做错了，错误次数加 1
+            records[id] = (records[id] || 0) + 1;
+        }
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
+    }
+
+    function setFilter(mode, btn) {
+        filterMode = mode;
+        document.querySelectorAll('.filter-group .btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        renderQuiz();
+    }
+
+    function renderQuiz() {
+        const records = getRecords();
+        const totalInDb = TOEIC_DB.length;
+        
+        // 更新统计信息
+        const wrongIds = Object.keys(records);
+        document.getElementById('stats').innerText = `题库: ${totalInDb} | 错题总数: ${wrongIds.length}`;
+
+        // 筛选逻辑
+        let filtered = TOEIC_DB.filter(q => {
+            const count = records[q.id] || 0;
+            if (filterMode === 'all') return true;
+            if (filterMode === 'wrong1') return count === 1;
+            if (filterMode === 'wrong2') return count === 2;
+            if (filterMode === 'heavy') return count >= 3;
+            return true;
+        });
+
+        if (filtered.length === 0) {
+            document.getElementById('quiz-container').innerHTML = `<div class='quiz-item'>当前分类下没有题目，去挑战其他模块吧！</div>`;
+            document.getElementById('submit-btn').style.display = 'none';
+            return;
+        }
+
+        // 随机抽10题
+        currentQuestions = filtered.sort(() => 0.5 - Math.random()).slice(0, 10);
+        
+        const container = document.getElementById('quiz-container');
+        container.innerHTML = '';
+        currentQuestions.forEach((q, idx) => {
+            const errCount = records[q.id] || 0;
+            const levelClass = errCount >= 3 ? 'lvl-3' : (errCount === 2 ? 'lvl-2' : (errCount === 1 ? 'lvl-1' : ''));
+            
+            const div = document.createElement('div');
+            div.className = `quiz-item ${levelClass}`;
+            div.innerHTML = `
+                <div style="font-weight:bold; margin-bottom:10px;">
+                    ${idx + 1}. ${q.q} 
+                    ${errCount > 0 ? `<span class="badge">已错 ${errCount} 次</span>` : ''}
+                </div>
+                ${q.o.map((opt, i) => {
+                    const code = String.fromCharCode(97 + i);
+                    return `
+                        <label class="option-label" id="lbl-${q.id}-${code}">
+                            <input type="radio" name="q${q.id}" value="${code}"> ${code.toUpperCase()}. ${opt}
+                        </label>
+                    `;
+                }).join('')}
+                <div id="msg-${q.id}" style="margin-top:10px; font-weight:bold; display:none"></div>
+            `;
+            container.appendChild(div);
+        });
+
+        document.getElementById('submit-btn').style.display = 'block';
+        document.getElementById('next-btn').style.display = 'none';
+        document.getElementById('score-board').style.display = 'none';
+        window.scrollTo(0,0);
+    }
+
+    function checkAnswers() {
+        let score = 0;
+        currentQuestions.forEach(q => {
+            const selected = document.querySelector(`input[name="q${q.id}"]:checked`);
+            const ans = selected ? selected.value : '';
+            const isCorrect = (ans === q.a);
+            
+            // 更新记录
+            updateRecord(q.id, isCorrect);
+            
+            // UI 反馈
+            document.getElementById(`lbl-${q.id}-${q.a}`).classList.add('correct-ans');
+            if (ans && !isCorrect) {
+                document.getElementById(`lbl-${q.id}-${ans}`).classList.add('wrong-ans');
+            }
+            
+            const msg = document.getElementById(`msg-${q.id}`);
+            msg.style.display = 'block';
+            msg.style.color = isCorrect ? 'var(--success)' : 'var(--error)';
+            msg.innerText = isCorrect ? '✅ 正确' : `❌ 错误，正确答案是 ${q.a.toUpperCase()}`;
+            
+            if (isCorrect) score++;
+            
+            // 锁定选项
+            document.getElementsByName(`q${q.id}`).forEach(i => i.disabled = true);
+        });
+
+        document.getElementById('score-board').style.display = 'block';
+        document.getElementById('score-board').innerText = `本组得分：${score} / ${currentQuestions.length}`;
+        document.getElementById('submit-btn').style.display = 'none';
+        document.getElementById('next-btn').style.display = 'block';
+    }
+
+    // 启动
+    window.onload = () => {
+        if (typeof TOEIC_DB === 'undefined') {
+            alert("未找到 data.js 数据文件！");
+        } else {
+            renderQuiz();
+        }
+    };
+</script>
+
+</body>
+</html>
